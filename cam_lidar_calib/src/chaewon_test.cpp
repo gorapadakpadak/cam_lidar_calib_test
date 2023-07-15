@@ -1,7 +1,3 @@
-//
-// Created by usl on 4/10/19.
-//
-
 #include <ros/ros.h>
 #include <sensor_msgs/Image.h>
 #include <sensor_msgs/PointCloud2.h>
@@ -49,6 +45,8 @@
 #include <iostream>
 #include <fstream>
 
+#include <yolov7_ros/DetectionInfo.h> //bounding box coordinate, info msg
+
 //PointCloud2 및 이미지 메시지의 동기화
 typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::PointCloud2,
                                                         sensor_msgs::Image> SyncPolicy;
@@ -63,6 +61,11 @@ private:
     message_filters::Subscriber<sensor_msgs::PointCloud2> *cloud_sub;
     //이미지
     message_filters::Subscriber<sensor_msgs::Image> *image_sub;
+
+    //chaewon
+    //bounding box subscribe
+    message_filters::Subscriber<yolov7_ros::DetectionInfo> detection_sub;
+
     //동기화
     message_filters::Synchronizer<SyncPolicy> *sync;
 
@@ -97,6 +100,9 @@ private:
 
     //라이다의 프레임 ID
     std::string lidar_frameId;
+    //chaewon
+    //cam frame ID
+    std::string cam_frameId;
 
     //카메라 및 라이다 데이터 게시
     std::string camera_in_topic;
@@ -126,15 +132,25 @@ public:
         lidar_in_topic = readParam<std::string>(nh, "lidar_in_topic");
         dist_cut_off = readParam<int>(nh, "dist_cut_off");
         camera_name = readParam<std::string>(nh, "camera_name");
+
         cloud_sub =  new message_filters::Subscriber<sensor_msgs::PointCloud2>(nh, lidar_in_topic, 1);
         image_sub = new message_filters::Subscriber<sensor_msgs::Image>(nh, camera_in_topic, 1);
+        detection_sub = nh.subscribe("/detection_info", 1, detectionInfoCallback);
+        
         std::string lidarOutTopic = camera_in_topic + "/velodyne_out_cloud";
         cloud_pub = nh.advertise<sensor_msgs::PointCloud2>(lidarOutTopic, 1);
         std::string imageOutTopic = camera_in_topic + "/projected_image";
         image_pub = nh.advertise<sensor_msgs::Image>(imageOutTopic, 1);
+        sensor_msgs::PointCloud2ConstPtr cloud_msg;
 
-        sync = new message_filters::Synchronizer<SyncPolicy>(SyncPolicy(10), *cloud_sub, *image_sub);
-        sync->registerCallback(boost::bind(&lidarImageProjection::callback, this, _1, _2));
+        //sync = new message_filters::Synchronizer<SyncPolicy>(SyncPolicy(10), *cloud_sub, *image_sub,);
+        //sync->registerCallback(boost::bind(&lidarImageProjection::callback, this, _1, _2));
+
+        // 라이다, 카메라, detection_info 토픽의 메시지를 동기화
+        typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::PointCloud2, sensor_msgs::Image, yolov7_ros::DetectionInfo> SyncPolicy;
+        message_filters::Synchronizer<SyncPolicy> sync(SyncPolicy(10), cloud_sub, image_sub, detection_sub);
+        sync.registerCallback(boost::bind(&fusionCallback, _1, _2, _3));
+
 
         C_T_L = Eigen::Matrix4d::Identity();
         c_R_l = cv::Mat::zeros(3, 3, CV_64F);
@@ -213,7 +229,35 @@ public:
         return ans;
     }
 
+    //minpa copy
+    void detectionInfoCallback(const yolov7_ros::DetectionInfo::ConstPtr& msg)
+    {
+        ROS_INFO("Received DetectionInfo message:");
+        std::vector<geometry_msgs::Point> bounding_boxes = msg->bounding_boxes;
+        int num_boxes = msg->bounding_boxes.size();
+        for (int i = 0; i < num_boxes; i += 4) {
+            if (i + 3 < num_boxes) {
+                float x1 = msg->bounding_boxes[i].x;
+                float y1 = msg->bounding_boxes[i].y;
+                float x2 = msg->bounding_boxes[i + 1].x;
+                float y2 = msg->bounding_boxes[i + 1].y;
+                float x3 = msg->bounding_boxes[i + 2].x;
+                float y3 = msg->bounding_boxes[i + 2].y;
+                float x4 = msg->bounding_boxes[i + 3].x;
+                float y4 = msg->bounding_boxes[i + 3].y;
+                ROS_INFO("  Box %d: x1=%f, y1=%f, x2=%f, y2=%f, x3=%f, y3=%f, x4=%f, y4=%f",
+                        (i / 4) + 1, x1, y1, x2, y2, x3, y3, x4, y4);
+            }
+        }
+        ROS_INFO("  Number of Detections: %d", msg->num_detections);
+        ROS_INFO("  Class ID: %d", msg->class_id);
 
+        // Call planeFilter with the updated bounding boxes and the point cloud
+        pcl::PointCloud<pcl::PointXYZ>::Ptr filtered_cloud = planeFilter(msg->bounding_boxes, cloud_msg);
+        
+        // Use the filtered point cloud as needed
+    }
+    //
     pcl::PointCloud<pcl::PointXYZ >::Ptr planeFilter(const sensor_msgs::PointCloud2ConstPtr &cloud_msg) {
 
         // sensor_msgs::PointCloud2 메시지 포인터(cloud_msg)를 입력으로 받아 in_cloud로 변환
@@ -266,9 +310,37 @@ public:
         sor.setStddevMulThresh (1);
         sor.filter (*plane_filtered);
 
-        return plane_filtered;
-    }
+        //minpa
+        // Filter the points based on bounding boxes
+        pcl::PointCloud<pcl::PointXYZ>::Ptr filtered_cloud(new pcl::PointCloud<pcl::PointXYZ>);
+        
+        for (const pcl::PointXYZ& point : plane_filtered->points) {
+            if (isPointInsideBoundingBoxes(point, bounding_boxes)) {
+                filtered_cloud->points.push_back(point);
+            }
+        }
+        filtered_cloud->width = filtered_cloud->points.size();
+        filtered_cloud->height = 1;
+        filtered_cloud->is_dense = true;
 
+        //
+        return plane_filtered;
+
+    }
+    //minpa copy
+    bool isPointInsideBoundingBoxes(const pcl::PointXYZ& point, const std::vector<geometry_msgs::Point>& bounding_boxes) {
+        for (size_t i = 0; i + 3 < bounding_boxes.size(); i += 4) {
+            float x_min = bounding_boxes[i].x;
+            float x_max = bounding_boxes[i + 1].x;
+            float y_min = bounding_boxes[i].y;
+            float y_max = bounding_boxes[i + 2].y;
+            if (point.x >= x_min && point.x <= x_max && point.y >= y_min && point.y <= y_max) {
+                return true;
+            }
+        }
+        return false;
+    }
+    //
     //입력 RGB 이미지(cv::Mat rgb)와 2D 포인트(cv::Point2d xy_f)를 파라미터로 받아 cv::Vec3b 색상 값을 반환
     cv::Vec3b atf(cv::Mat rgb, cv::Point2d xy_f){
         //각 채널(R, G, B)의 색상 값 합계를 저장
@@ -304,7 +376,7 @@ public:
         return color;
     }
 
-
+    
     //라이다 프레임과 카메라 프레임 사이의 변환
     void publishTransforms() {
         static tf::TransformBroadcaster br;
@@ -367,6 +439,7 @@ public:
                   const sensor_msgs::ImageConstPtr &image_msg) {
         //라이더 메시지의 frame_id를 lidar_frameId 변수에 할당
         lidar_frameId = cloud_msg->header.frame_id;
+        cam_frameId=vis_msg->header.frame_id;
         //초기화
         objectPoints_L.clear();
         objectPoints_C.clear();
@@ -391,6 +464,9 @@ public:
         // 라이다 포인트를 필터링하고 지상면을 나타내는 포인트 클라우드를 얻음
         pcl::PointCloud<pcl::PointXYZ>::Ptr in_cloud(new pcl::PointCloud<pcl::PointXYZ>);
         if(project_only_plane) {
+            //chaewon
+            std::vector<geometry_msgs::Point> bounding_boxes; 
+            //
             in_cloud = planeFilter(cloud_msg);
             for(size_t i = 0; i < in_cloud->points.size(); i++) {
                 //필터링된 평면의 3D 라이더 포인트로 업데이트
@@ -487,7 +563,7 @@ public:
 
 int main(int argc, char** argv) {
     ros::init(argc, argv, "cam_lidar_proj");
-    lidarImageProjection lip;
+    lidarImageProjection lidar_image_projection;
     ros::spin();
     return 0;
 }
