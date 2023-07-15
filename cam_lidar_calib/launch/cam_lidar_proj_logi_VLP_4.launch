@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<launch>
+  <!--시뮬레이션 시간을 사용-->
+  <param name ="/use_sim_time" value="true"/>
+
+  <!--캘리브레이션 프로세스 결과가 저장될 파일 경로-->
+  <param name = "result_file" type="string" value="$(find cam_lidar_calib)/result/C_T_L_logi_VLP_GP_3.txt"/> <!--수정-->
+
+  <!--평면상의 포인트만 고려-->
+  <param name= "project_only_plane" type="bool" value="false"/>
+
+  <!--노드가 이미지 및 포인트 클라우드 데이터를 얻기 위해 구독할 토픽-->
+	<!--**카메라 토픽 수정 필요**-->  
+  <param name = "camera_in_topic" type="string" value="/yolov7/yolov7/visualization"/> <!--바운딩박스가 그려지는 욜로 이미지-->
+  <param name = "lidar_in_topic" type="string" value="/velodyne_points"/>
+
+  <!--카메라 이름-->
+  <!--**수정 필요**-->
+  <param name = "camera_name" type="string" value="logi"/>
+  
+  <!--필터링 포인트의 거리 차단-->
+  <!--수정필요-->
+  <param name = "dist_cut_off" type="int" value="5"/>
+
+  <!--카메라 구성 파일의 경로-->
+	<!--**수정 필요**-->
+  <param name = "cam_config_file_path" type="string" value="$(find cam_lidar_calib)/config/logi_3.yaml" />
+
+  <node  pkg="cam_lidar_calib" name="cam_lidar_proj" type="cam_lidar_proj_node" output="screen">
+  </node>
+</launch>
