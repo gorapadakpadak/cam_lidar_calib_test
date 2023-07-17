@@ -405,6 +405,7 @@ public:
             pcl_conversions::toPCL(*cloud_msg, *cloud_in);
             pcl::fromPCLPointCloud2(*cloud_in, *in_cloud);
 
+
             //in_cloud 포인트 클라우드의 라이더 포인트를 반복
             for(size_t i = 0; i < in_cloud->points.size(); i++) {
 

@@ -10,9 +10,8 @@
   <param name= "project_only_plane" type="bool" value="false"/>
 
   <!--노드가 이미지 및 포인트 클라우드 데이터를 얻기 위해 구독할 토픽-->
-	<!--**카메라 토픽 수정 필요**-->
-  <!--/yolov7/yolov7/visualization-->
-  <param name = "camera_in_topic" type="string" value="/usb_cam/image_raw"/> <!--바운딩박스가 그려지는 욜로 이미지-->
+	<!--**카메라 토픽 수정 필요**-->  
+  <param name = "camera_in_topic" type="string" value="/yolov7/yolov7/visualization"/> <!--바운딩박스가 그려지는 욜로 이미지-->
   <param name = "lidar_in_topic" type="string" value="/velodyne_points"/>
 
   <!--카메라 이름-->
@@ -27,6 +26,6 @@
 	<!--**수정 필요**-->
   <param name = "cam_config_file_path" type="string" value="$(find cam_lidar_calib)/config/logi_3.yaml" />
 
-  <node  pkg="cam_lidar_calib" name="cam_lidar_proj" type="cam_lidar_proj_node" output="screen">
+  <node  pkg="cam_lidar_calib" name="chaewon_test" type="chaewon_test.cpp" output="screen">
   </node>
 </launch>
